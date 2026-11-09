@@ -67,6 +67,8 @@ pub struct Playlist {
     pub covers: Vec<String>,
     pub track_count: u32,
     pub link: Option<Link>,
+    #[serde(default)]
+    pub updated_at: i64,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,6 +134,7 @@ fn summary(
     id: String,
     name: String,
     playlist_type: PlaylistType,
+    updated_at: i64,
 ) -> AppResult<Playlist> {
     let (track_count, covers) = match playlist_type {
         PlaylistType::Local => {
@@ -170,33 +173,34 @@ fn summary(
         playlist_type,
         covers,
         track_count,
+        updated_at,
     })
 }
 pub(crate) fn playlists(store: &Store) -> AppResult<Vec<Playlist>> {
     let db = store.0.lock().map_err(|_| "曲库锁不可用")?;
     let rows = db
-        .prepare("SELECT CAST(id AS TEXT),name,playlist_type FROM local_playlists ORDER BY id DESC")
+        .prepare("SELECT CAST(id AS TEXT),name,playlist_type,COALESCE(updated_at, 0) FROM local_playlists ORDER BY id DESC")
         .map_err(|e| e.to_string())?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
         .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<(String, String, String)>, _>>()
+        .collect::<Result<Vec<(String, String, String, i64)>, _>>()
         .map_err(|e| e.to_string())?;
     rows.into_iter()
-        .map(|(id, name, playlist_type)| {
-            summary(&db, id, name, PlaylistType::from_db(&playlist_type)?)
+        .map(|(id, name, playlist_type, updated_at)| {
+            summary(&db, id, name, PlaylistType::from_db(&playlist_type)?, updated_at)
         })
         .collect()
 }
 pub(crate) fn playlist(store: &Store, id: &str) -> AppResult<Playlist> {
     let db = store.0.lock().map_err(|_| "曲库锁不可用")?;
-    let (name, playlist_type) = db
+    let (name, playlist_type, updated_at) = db
         .query_row(
-            "SELECT name,playlist_type FROM local_playlists WHERE id=?1",
+            "SELECT name,playlist_type,COALESCE(updated_at, 0) FROM local_playlists WHERE id=?1",
             [id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
         )
         .map_err(|e| e.to_string())?;
-    summary(&db, id.into(), name, PlaylistType::from_db(&playlist_type)?)
+    summary(&db, id.into(), name, PlaylistType::from_db(&playlist_type)?, updated_at)
 }
 pub(crate) fn tracks(store: &Store, id: &str, offset: u32, excluded: bool) -> AppResult<ReadPage> {
     let db = store.0.lock().map_err(|_| "曲库锁不可用")?;
@@ -297,13 +301,14 @@ fn create(db: &Connection, value: &str, playlist_type: PlaylistType) -> AppResul
         return Err("最多创建 200 个歌单".into());
     }
     db.execute(
-        "INSERT INTO local_playlists(name,playlist_type) VALUES(?1,?2)",
+        "INSERT INTO local_playlists(name,playlist_type,updated_at) VALUES(?1,?2,?3)",
         params![
             name(value)?,
             match playlist_type {
                 PlaylistType::Local => "local",
                 PlaylistType::Aggregate => "aggregate",
-            }
+            },
+            now_seconds()
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -383,6 +388,7 @@ pub(crate) fn write(store: &Store, request: &Write) -> AppResult<String> {
                     .is_some_and(|link| link.reference.source.as_str() == track.source_id());
                 tx.execute("INSERT INTO local_playlist_tracks(playlist_id,key,position,manual,remote,excluded,value) VALUES(?1,?2,?6,?4,?5,0,?3) ON CONFLICT(playlist_id,key) DO UPDATE SET manual=?4,remote=MAX(remote,?5),excluded=0,value=excluded.value",params![id,key,value,!remote,remote,first + index as i64]).map_err(|e|e.to_string())?;
             }
+            tx.execute("UPDATE local_playlists SET updated_at=?1 WHERE id=?2", params![now_seconds(), id]).map_err(|e| e.to_string())?;
         }
         Write::Remove { keys, .. } => {
             for key in keys {
@@ -396,14 +402,15 @@ pub(crate) fn write(store: &Store, request: &Write) -> AppResult<String> {
                 )
                 .map_err(|e| e.to_string())?;
             }
+            tx.execute("UPDATE local_playlists SET updated_at=?1 WHERE id=?2", params![now_seconds(), id]).map_err(|e| e.to_string())?;
         }
         Write::Rename { name, .. } => {
             if linked(&tx, &id)?.is_some() {
                 return Err("派生歌单名称跟随原歌单，解除关联后可改名".into());
             }
             tx.execute(
-                "UPDATE local_playlists SET name=?1 WHERE id=?2",
-                params![name.trim(), id],
+                "UPDATE local_playlists SET name=?1, updated_at=?2 WHERE id=?3",
+                params![name.trim(), now_seconds(), id],
             )
             .map_err(|e| e.to_string())?;
             self::name(name)?;
@@ -454,6 +461,7 @@ pub(crate) fn write(store: &Store, request: &Write) -> AppResult<String> {
                 )
                 .map_err(|e| e.to_string())?;
             }
+            tx.execute("UPDATE local_playlists SET updated_at=?1 WHERE id=?2", params![now_seconds(), id]).map_err(|e| e.to_string())?;
         }
     }
     capacity(&tx, &id)?;
@@ -554,6 +562,7 @@ pub(crate) fn apply_cloud_playlist(
     store: &Store,
     name: &str,
     tracks: &[Track],
+    updated_at: i64,
 ) -> AppResult<String> {
     if tracks.len() > MAX_TRACKS {
         return Err("歌单超过 10000 首，未应用同步".into());
@@ -561,22 +570,55 @@ pub(crate) fn apply_cloud_playlist(
     let mut db = store.0.lock().map_err(|_| "曲库锁不可用")?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
 
-    let existing_id: Option<String> = tx
+    let existing: Option<(String, i64)> = tx
         .query_row(
-            "SELECT CAST(id AS TEXT) FROM local_playlists WHERE name=?1",
+            "SELECT CAST(id AS TEXT), COALESCE(updated_at, 0) FROM local_playlists WHERE name=?1",
             [name],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
 
-    let playlist_id = if let Some(eid) = existing_id {
-        eid
+    let (playlist_id, local_updated) = if let Some((eid, uat)) = existing {
+        (eid, uat)
     } else {
-        create(&tx, name, PlaylistType::Aggregate)?
+        (create(&tx, name, PlaylistType::Aggregate)?, 0)
     };
 
     Store::save_tracks_in(&tx, tracks)?;
+
+    // 读取本地现存歌曲（防丢失：若本地有新加但云端尚未包含的歌曲，予以保留合并）
+    let existing_tracks: Vec<Track> = {
+        let mut stmt = tx
+            .prepare("SELECT COALESCE(t.value, p.value) FROM local_playlist_tracks p LEFT JOIN tracks t ON t.key=p.key WHERE p.playlist_id=?1 AND p.excluded=0 ORDER BY p.position")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([&playlist_id], |r| r.get::<_, Option<String>>(0)).map_err(|e| e.to_string())?;
+        let mut list = Vec::new();
+        for r in rows {
+            if let Some(val) = r.map_err(|e| e.to_string())? {
+                if let Ok(t) = serde_json::from_str::<Track>(&val) {
+                    list.push(t);
+                }
+            }
+        }
+        list
+    };
+
+    // 建立合并后的歌曲清单：先以云端传来的 tracks 为主，后附本地独有且未被排除的歌曲
+    let mut final_tracks = tracks.to_vec();
+    let mut seen_keys: std::collections::HashSet<String> =
+        final_tracks.iter().map(|t| t.key.clone()).collect();
+
+    for t in existing_tracks {
+        if !seen_keys.contains(&t.key) {
+            seen_keys.insert(t.key.clone());
+            final_tracks.push(t);
+        }
+    }
+
+    if final_tracks.len() > MAX_TRACKS {
+        final_tracks.truncate(MAX_TRACKS);
+    }
 
     tx.execute(
         "DELETE FROM local_playlist_tracks WHERE playlist_id=?1",
@@ -584,7 +626,7 @@ pub(crate) fn apply_cloud_playlist(
     )
     .map_err(|e| e.to_string())?;
 
-    for (index, track) in tracks.iter().enumerate() {
+    for (index, track) in final_tracks.iter().enumerate() {
         tx.execute(
             "INSERT INTO local_playlist_tracks(playlist_id, key, position, manual, remote, excluded, value) VALUES(?1, ?2, ?3, 1, 0, 0, ?4)",
             params![
@@ -596,6 +638,13 @@ pub(crate) fn apply_cloud_playlist(
         )
         .map_err(|e| e.to_string())?;
     }
+
+    let final_updated = std::cmp::max(updated_at, local_updated);
+    tx.execute(
+        "UPDATE local_playlists SET updated_at=?1 WHERE id=?2",
+        params![final_updated, playlist_id],
+    )
+    .map_err(|e| e.to_string())?;
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(playlist_id)

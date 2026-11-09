@@ -126,6 +126,7 @@ pub(crate) async fn execute_sync(
             let mut payloads = Vec::new();
             for p in list {
                 let tracks = store::all_playlist_tracks(&s, &p.id)?;
+                let uat = if p.updated_at > 0 { p.updated_at } else { now };
                 payloads.push(CloudPlaylistPayload {
                     id: p.id,
                     name: p.name,
@@ -135,7 +136,7 @@ pub(crate) async fn execute_sync(
                     },
                     covers: p.covers,
                     track_count: tracks.len(),
-                    updated_at: now,
+                    updated_at: uat,
                     tracks,
                 });
             }
@@ -186,7 +187,7 @@ pub(crate) async fn execute_sync(
         let s = store.clone();
         move || {
             for cp in updated_playlists {
-                let _ = store::apply_cloud_playlist(&s, &cp.name, &cp.tracks)?;
+                let _ = store::apply_cloud_playlist(&s, &cp.name, &cp.tracks, cp.updated_at)?;
             }
             s.set_setting("cloudSyncLastTime", &now.to_string())?;
             Ok::<_, String>(())

@@ -112,7 +112,7 @@ impl Store {
                 error TEXT,
                 updated_at INTEGER NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS local_playlists (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, playlist_type TEXT NOT NULL DEFAULT 'aggregate');
+            CREATE TABLE IF NOT EXISTS local_playlists (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, playlist_type TEXT NOT NULL DEFAULT 'aggregate', updated_at INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS local_playlist_tracks (playlist_id INTEGER NOT NULL, key TEXT NOT NULL, position INTEGER NOT NULL, manual INTEGER NOT NULL DEFAULT 1, remote INTEGER NOT NULL DEFAULT 0, excluded INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL, PRIMARY KEY(playlist_id,key));
             CREATE TABLE IF NOT EXISTS local_mv_links (track_key TEXT PRIMARY KEY, path TEXT NOT NULL, offset_ms INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS mv_links (track_key TEXT PRIMARY KEY, source TEXT NOT NULL, mv_id TEXT NOT NULL, title TEXT NOT NULL, offset_ms INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
@@ -133,6 +133,16 @@ impl Store {
             connection
                 .execute(
                     "ALTER TABLE local_playlists ADD COLUMN playlist_type TEXT NOT NULL DEFAULT 'aggregate'",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        if !has_column(&connection, "local_playlists", "updated_at")
+            .map_err(|e| e.to_string())?
+        {
+            connection
+                .execute(
+                    "ALTER TABLE local_playlists ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
                     [],
                 )
                 .map_err(|e| e.to_string())?;

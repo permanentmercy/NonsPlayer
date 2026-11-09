@@ -14,13 +14,96 @@ import sys
 import time
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "1.0.0"
+VERSION = "1.2.0"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 17777
 DEFAULT_DB = "nons_playlists.db"
 
 # 全局配置
 AUTH_TOKEN = os.environ.get("SYNC_TOKEN", "")
+
+
+def get_track_key(track: dict) -> str:
+    """提取歌曲的唯一标识键"""
+    key = track.get("key")
+    if key:
+        return str(key)
+    src = track.get("source", {})
+    if isinstance(src, dict):
+        t_info = src.get("track", {})
+        ref = t_info.get("reference", {})
+        if ref:
+            return f"{ref.get('source')}:{ref.get('kind')}:{ref.get('id')}"
+    return json.dumps(track, sort_keys=True)
+
+
+def merge_tracks(primary_tracks: list, secondary_tracks: list) -> list:
+    """保持优先顺序的歌曲集合合并（基于唯一键去重）"""
+    result = []
+    seen = set()
+    for t in primary_tracks:
+        k = get_track_key(t)
+        if k not in seen:
+            seen.add(k)
+            result.append(t)
+    for t in secondary_tracks:
+        k = get_track_key(t)
+        if k not in seen:
+            seen.add(k)
+            result.append(t)
+    return result
+
+
+def merge_covers(primary_covers: list, secondary_covers: list) -> list:
+    """封面合并去重"""
+    seen = set()
+    result = []
+    for c in primary_covers + secondary_covers:
+        if c and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result[:4]
+
+
+def deduplicate_existing_playlists(conn):
+    """将同名歌单的歌曲合并并删除因多端本地自增 ID 产生的重复记录"""
+    rows = conn.execute(
+        "SELECT id, name, playlist_type, covers_json, track_count, updated_at, tracks_json FROM playlists"
+    ).fetchall()
+    grouped = {}
+    for r in rows:
+        norm_name = r["name"].strip()
+        grouped.setdefault(norm_name, []).append(r)
+    for name, plist in grouped.items():
+        if len(plist) <= 1:
+            continue
+        # 按 updated_at 降序排序，最新更新的作为 primary
+        plist.sort(key=lambda x: x["updated_at"], reverse=True)
+        primary = plist[0]
+        all_tracks = json.loads(primary["tracks_json"] or "[]")
+        all_covers = json.loads(primary["covers_json"] or "[]")
+        for other in plist[1:]:
+            other_tracks = json.loads(other["tracks_json"] or "[]")
+            other_covers = json.loads(other["covers_json"] or "[]")
+            all_tracks = merge_tracks(all_tracks, other_tracks)
+            all_covers = merge_covers(all_covers, other_covers)
+            conn.execute("DELETE FROM playlists WHERE id = ?", (other["id"],))
+        conn.execute(
+            """
+            UPDATE playlists SET
+                covers_json = ?,
+                track_count = ?,
+                tracks_json = ?
+            WHERE id = ?
+            """,
+            (
+                json.dumps(all_covers, ensure_ascii=False),
+                len(all_tracks),
+                json.dumps(all_tracks, ensure_ascii=False),
+                primary["id"],
+            ),
+        )
+    conn.commit()
 
 
 def init_db(db_path: str):
@@ -48,6 +131,8 @@ def init_db(db_path: str):
         """
     )
     conn.commit()
+    conn.row_factory = sqlite3.Row
+    deduplicate_existing_playlists(conn)
     conn.close()
 
 
@@ -208,54 +293,78 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/v1/playlists":
             pid = str(payload.get("id", "")).strip()
             name = str(payload.get("name", "")).strip()
-            if not pid or not name:
-                self._send_error(400, "缺少必要参数：id 或 name 不能为空")
+            if not name:
+                self._send_error(400, "缺少必要参数：name 不能为空")
                 return
 
             ptype = payload.get("playlistType", "aggregate")
-            covers = json.dumps(payload.get("covers", []), ensure_ascii=False)
+            covers = payload.get("covers", [])
             tracks = payload.get("tracks", [])
-            tracks_json = json.dumps(tracks, ensure_ascii=False)
-            track_count = len(tracks)
             updated_at = int(payload.get("updatedAt", now))
 
             with get_db(self.db_path) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO playlists (id, name, playlist_type, covers_json, track_count, updated_at, tracks_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        name = excluded.name,
-                        playlist_type = excluded.playlist_type,
-                        covers_json = excluded.covers_json,
-                        track_count = excluded.track_count,
-                        updated_at = excluded.updated_at,
-                        tracks_json = excluded.tracks_json
-                    """,
-                    (
-                        pid,
-                        name,
-                        ptype,
-                        covers,
-                        track_count,
-                        updated_at,
-                        tracks_json,
-                    ),
-                )
+                existing = conn.execute(
+                    "SELECT id, covers_json, updated_at, tracks_json FROM playlists WHERE LOWER(TRIM(name)) = LOWER(?)",
+                    (name,),
+                ).fetchone()
+                if not existing:
+                    target_id = pid if pid else str(int(time.time() * 1000))
+                    conn.execute(
+                        """
+                        INSERT INTO playlists (id, name, playlist_type, covers_json, track_count, updated_at, tracks_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            target_id,
+                            name,
+                            ptype,
+                            json.dumps(covers, ensure_ascii=False),
+                            len(tracks),
+                            updated_at,
+                            json.dumps(tracks, ensure_ascii=False),
+                        ),
+                    )
+                else:
+                    target_id = existing["id"]
+                    srv_tracks = json.loads(existing["tracks_json"] or "[]")
+                    srv_covers = json.loads(existing["covers_json"] or "[]")
+                    merged_t = merge_tracks(tracks, srv_tracks)
+                    merged_c = merge_covers(covers, srv_covers)
+                    conn.execute(
+                        """
+                        UPDATE playlists SET
+                            name = ?,
+                            playlist_type = ?,
+                            covers_json = ?,
+                            track_count = ?,
+                            updated_at = ?,
+                            tracks_json = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            name,
+                            ptype,
+                            json.dumps(merged_c, ensure_ascii=False),
+                            len(merged_t),
+                            max(updated_at, existing["updated_at"]),
+                            json.dumps(merged_t, ensure_ascii=False),
+                            target_id,
+                        ),
+                    )
                 conn.commit()
+
             self._send_json(
                 200,
                 {
                     "success": True,
-                    "id": pid,
-                    "trackCount": track_count,
+                    "id": target_id,
                     "updatedAt": updated_at,
                 },
             )
             return
 
         # 批量双向同步接口：POST /api/v1/sync
-        # 客户端上报自身歌单与版本，服务端根据时间戳进行合并与差异返回
+        # 客户端上报自身歌单与版本，服务端根据歌单名归一并做歌曲全量并集增量合并
         if path == "/api/v1/sync":
             client_playlists = payload.get("playlists", [])
             updated_ids = []
@@ -264,49 +373,82 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
                 for p in client_playlists:
                     pid = str(p.get("id", "")).strip()
                     name = str(p.get("name", "")).strip()
-                    if not pid or not name:
+                    if not name:
                         continue
                     ptype = p.get("playlistType", "aggregate")
-                    covers = json.dumps(p.get("covers", []), ensure_ascii=False)
-                    tracks = p.get("tracks", [])
-                    tracks_json = json.dumps(tracks, ensure_ascii=False)
-                    track_count = len(tracks)
+                    client_covers = p.get("covers", [])
+                    client_tracks = p.get("tracks", [])
                     client_updated = int(p.get("updatedAt", now))
 
-                    # 检查服务端版本
-                    curr = conn.execute(
-                        "SELECT updated_at FROM playlists WHERE id = ?", (pid,)
+                    # 通过歌单名称查找服务端现有同名歌单（忽略大小写与首尾空格）
+                    existing = conn.execute(
+                        "SELECT id, name, playlist_type, covers_json, track_count, updated_at, tracks_json FROM playlists WHERE LOWER(TRIM(name)) = LOWER(?)",
+                        (name,),
                     ).fetchone()
-                    if not curr or client_updated >= curr["updated_at"]:
+
+                    if not existing:
+                        # 服务端不存在，以客户端 ID 或时间戳新建
+                        server_id = pid if pid else str(int(time.time() * 1000))
                         conn.execute(
                             """
                             INSERT INTO playlists (id, name, playlist_type, covers_json, track_count, updated_at, tracks_json)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(id) DO UPDATE SET
-                                name = excluded.name,
-                                playlist_type = excluded.playlist_type,
-                                covers_json = excluded.covers_json,
-                                track_count = excluded.track_count,
-                                updated_at = excluded.updated_at,
-                                tracks_json = excluded.tracks_json
                             """,
                             (
-                                pid,
+                                server_id,
                                 name,
                                 ptype,
-                                covers,
-                                track_count,
+                                json.dumps(client_covers, ensure_ascii=False),
+                                len(client_tracks),
                                 client_updated,
-                                tracks_json,
+                                json.dumps(client_tracks, ensure_ascii=False),
                             ),
                         )
-                        updated_ids.append(pid)
+                        updated_ids.append(server_id)
+                    else:
+                        server_id = existing["id"]
+                        server_updated = existing["updated_at"]
+                        server_tracks = json.loads(existing["tracks_json"] or "[]")
+                        server_covers = json.loads(existing["covers_json"] or "[]")
+
+                        # 双向歌曲并集合并（保留两端添加的新歌，绝不丢失）
+                        if client_updated >= server_updated:
+                            merged_tracks = merge_tracks(client_tracks, server_tracks)
+                            merged_covers = merge_covers(client_covers, server_covers)
+                            final_updated = client_updated
+                        else:
+                            merged_tracks = merge_tracks(server_tracks, client_tracks)
+                            merged_covers = merge_covers(server_covers, client_covers)
+                            final_updated = server_updated
+
+                        conn.execute(
+                            """
+                            UPDATE playlists SET
+                                name = ?,
+                                playlist_type = ?,
+                                covers_json = ?,
+                                track_count = ?,
+                                updated_at = ?,
+                                tracks_json = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                name,
+                                ptype,
+                                json.dumps(merged_covers, ensure_ascii=False),
+                                len(merged_tracks),
+                                final_updated,
+                                json.dumps(merged_tracks, ensure_ascii=False),
+                                server_id,
+                            ),
+                        )
+                        updated_ids.append(server_id)
 
                 conn.commit()
 
-                # 返回服务端全量歌单供客户端比对更新
+                # 返回服务端全量归一后的歌单供客户端比对更新
                 all_rows = conn.execute(
-                    "SELECT id, name, playlist_type, covers_json, track_count, updated_at, tracks_json FROM playlists"
+                    "SELECT id, name, playlist_type, covers_json, track_count, updated_at, tracks_json FROM playlists ORDER BY updated_at DESC"
                 ).fetchall()
                 server_playlists = []
                 for r in all_rows:
@@ -355,9 +497,13 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
         self._send_error(404, "接口不存在")
 
     def log_message(self, format, *args):
-        # 简化日志输出至标准错误输出
+        # 简化日志输出至标准错误输出，避免 IndexError
+        try:
+            msg = format % args
+        except Exception:
+            msg = " ".join(str(a) for a in args)
         sys.stderr.write(
-            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {args[0]} {args[1]} -> {args[2]}\n"
+            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {self.address_string()} - {msg}\n"
         )
 
 

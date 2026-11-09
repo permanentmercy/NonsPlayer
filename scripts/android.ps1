@@ -20,6 +20,8 @@ $env:ANDROID_HOME = Join-Path $nonsAndroid 'sdk'
 $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
 $env:NDK_HOME = Join-Path $env:ANDROID_HOME "ndk/$nonsNdkVersion"
 $env:GRADLE_USER_HOME = Join-Path $nonsAndroid 'gradle'
+$env:CARGO_BUILD_JOBS = '24'
+$env:GRADLE_OPTS = '-Dorg.gradle.parallel=true -Dorg.gradle.workers.max=24'
 $env:CARGO_PROFILE_DEV_DEBUG = '0'
 # Android release ships without native debug data; desktop release keeps its
 # line tables for backtraces. Keep a symbol table only when it is useful for
