@@ -16,6 +16,7 @@ NonsPlayer 是一款基于 Tauri v2 (Rust + React) 的高音质流媒体与本�
 | `cloud-sync` | `v1.0.0` | 路由器专用轻量级歌单同步服务（Python/Go/Docker）及接口协议、部署配置规范 | **已完成** | [cloud-sync/v1.0.0/plan.md](cloud-sync/v1.0.0/plan.md) | [cloud-sync/v1.0.0/result.md](cloud-sync/v1.0.0/result.md) |
 | `cloud-sync` | `v1.1.0` | 客户端云端双向同步引擎（PC & Android）、启动自动静默对齐、设置控制面板集成与 APK 打包 | **已完成** | [cloud-sync/v1.1.0/plan.md](cloud-sync/v1.1.0/plan.md) | [cloud-sync/v1.1.0/result.md](cloud-sync/v1.1.0/result.md) |
 | `cloud-sync` | `v1.2.0` | 跨端歌单双向增量合并修复（歌曲去重合并、真实更新时间戳、多端 ID 漂移归一与服务端去重） | **已完成** | [cloud-sync/v1.2.0/plan.md](cloud-sync/v1.2.0/plan.md) | [cloud-sync/v1.2.0/result.md](cloud-sync/v1.2.0/result.md) |
+| `windows-build` | `v1.0.0` | Windows Release 构建与打包修复（24核全开、Tauri工具链完整打包、替换验证与统一分发） | **已完成** | [windows-build/v1.0.0/plan.md](windows-build/v1.0.0/plan.md) | [windows-build/v1.0.0/result.md](windows-build/v1.0.0/result.md) |
 
 ---
 *注：本项目开发计划与各版本执行产物依据团队规范持续同步更新于 `public/` 目录下。*
