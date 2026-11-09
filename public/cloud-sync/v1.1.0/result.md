@@ -32,9 +32,9 @@
 | **Rust 启动守护** | `app/src-tauri/src/application/mod.rs` | 注册 Tauri IPC 命令（`cloud_sync` 等），并在 App 启动就绪后自动启动后台同步 |
 | **前端设置卡片** | `app/src/features/settings/network-service/cloud-sync-card.tsx` | 新增“路由器自建云端同步”卡片组件，预置 `https://sync.example.com` |
 | **前端页面挂载** | `app/src/features/settings/network-service/network-service-page.tsx` | 将云同步卡片引入网络与服务设置页面 |
-| **Android 安装包** | `Nons-1.12.1-android-arm64-debug.apk` | 根目录下最新编译的 Android 安装包（已内置云同步 + B 站适配器） |
-| **PC Release 可执行文件** | `Nons.exe` | 根目录下最新 Release 构建的 Windows 原生可执行文件（已内置云同步 + B 站适配器，约 43MB） |
-| **独立 B 站适配器包** | `bilibili-adapter.zip` | 根目录下独立的 B 站 WebAssembly 适配器包，可直接拖入任意已有客户端使用 |
+| **Android 安装包** | `Nons-1.12.1-android-arm64-debug.apk` | 统一打包目录 `release-packages/` 下最新编译的 Android 安装包（已内置云同步 + B 站适配器） |
+| **PC Release 可执行文件** | `Nons.exe` | 统一打包目录 `release-packages/` 下最新 Release 构建的 Windows 原生可执行文件（已内置云同步 + B 站适配器，约 43MB） |
+| **独立 B 站适配器包** | `bilibili-adapter.zip` | 统一打包目录 `release-packages/` 下独立的 B 站 WebAssembly 适配器包，可直接拖入任意已有客户端使用 |
 
 ---
 
