@@ -5,7 +5,7 @@ import { useMusicNavigation } from './music-navigation'
 export function usePrimaryMusicPage() {
   const { page } = useMusicNavigation()
   const { plugins } = usePlugins()
-  if (['library', 'discover', 'local', 'tools'].includes(page.view))
+  if (['library', 'discover', 'local', 'tools', 'search'].includes(page.view))
     return !page.query && !page.collection
   if (page.view !== 'plugin') return false
   return plugins.some(

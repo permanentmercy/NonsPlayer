@@ -35,7 +35,7 @@ import { TrackTitle } from '@/components/music/track-title'
 // Copyright (c) 2020-2023 qier222, MIT. See notices/YesPlayMusic-LICENSE.txt.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { ChevronRight, Play, RefreshCw, Settings } from 'lucide-react'
+import { ChevronRight, Play, RefreshCw, Search, Settings } from 'lucide-react'
 import { errorText, nativeCall, usePlayer, type Track } from '@/lib/player'
 import {
   getLibraryCollections,
@@ -420,7 +420,18 @@ export default function MobileMusicLibrary({
           <header className="library-profile">
             <div className="library-profile-main">
               <h1 className="library-heading">音乐库</h1>
-              <SettingsDialog
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon-lg"
+                  className="mobile-library-settings"
+                  aria-label="搜索音乐"
+                  title="搜索音乐"
+                  onClick={() => navigate('search')}
+                >
+                  <Search aria-hidden="true" />
+                </Button>
+                <SettingsDialog
                 onOpenPage={(section = '') => navigate('settings', section)}
                 onOpenAccounts={() => navigate('accounts')}
                 trigger={
@@ -435,6 +446,7 @@ export default function MobileMusicLibrary({
                   </Button>
                 }
               />
+              </div>
             </div>
           </header>
           <button
