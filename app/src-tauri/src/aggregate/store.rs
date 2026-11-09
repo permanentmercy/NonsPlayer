@@ -527,3 +527,76 @@ pub(crate) fn apply_checked(
     tx.commit().map_err(|e| e.to_string())?;
     Ok(id)
 }
+
+
+pub(crate) fn all_playlist_tracks(store: &Store, id: &str) -> AppResult<Vec<Track>> {
+    let db = store.0.lock().map_err(|_| "曲库锁不可用")?;
+    let mut statement = db
+        .prepare(
+            "SELECT COALESCE(t.value, p.value) FROM local_playlist_tracks p LEFT JOIN tracks t ON t.key=p.key WHERE p.playlist_id=?1 AND p.excluded=0 ORDER BY p.position, p.key",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([id], |r| r.get::<_, Option<String>>(0))
+        .map_err(|e| e.to_string())?;
+    let mut tracks = Vec::new();
+    for row in rows {
+        if let Some(val) = row.map_err(|e| e.to_string())? {
+            if let Ok(track) = serde_json::from_str::<Track>(&val) {
+                tracks.push(track);
+            }
+        }
+    }
+    Ok(tracks)
+}
+
+pub(crate) fn apply_cloud_playlist(
+    store: &Store,
+    name: &str,
+    tracks: &[Track],
+) -> AppResult<String> {
+    if tracks.len() > MAX_TRACKS {
+        return Err("歌单超过 10000 首，未应用同步".into());
+    }
+    let mut db = store.0.lock().map_err(|_| "曲库锁不可用")?;
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+
+    let existing_id: Option<String> = tx
+        .query_row(
+            "SELECT CAST(id AS TEXT) FROM local_playlists WHERE name=?1",
+            [name],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let playlist_id = if let Some(eid) = existing_id {
+        eid
+    } else {
+        create(&tx, name, PlaylistType::Aggregate)?
+    };
+
+    Store::save_tracks_in(&tx, tracks)?;
+
+    tx.execute(
+        "DELETE FROM local_playlist_tracks WHERE playlist_id=?1",
+        [&playlist_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    for (index, track) in tracks.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO local_playlist_tracks(playlist_id, key, position, manual, remote, excluded, value) VALUES(?1, ?2, ?3, 1, 0, 0, ?4)",
+            params![
+                playlist_id,
+                track.key,
+                index as i64,
+                serde_json::to_string(track).map_err(|e| e.to_string())?
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(playlist_id)
+}

@@ -48,3 +48,15 @@ packages/music-web-provider/target/
 packages/wasm-crypto/target/
 
 .local/adapters/
+
+# Sync Server Databases
+*.db
+*.db-shm
+*.db-wal
+sync-server/data/
+
+# Binaries and packages
+Nons.exe
+*.apk
+*.zip
+

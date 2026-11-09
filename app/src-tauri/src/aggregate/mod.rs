@@ -1,5 +1,6 @@
 //! Device-owned playlists. Remote relationships are durable user data, not caches.
 mod store;
+pub(crate) mod cloud;
 pub(crate) mod sync;
 #[cfg(test)]
 mod tests;

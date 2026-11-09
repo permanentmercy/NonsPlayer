@@ -1,3 +1,4 @@
+import { isAndroid } from '@/lib/platform'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { SettingsCard } from '@/features/settings/shell/settings-card'
+import { CloudSyncCard } from './cloud-sync-card'
 import { reportCaughtError } from '@/lib/diagnostics'
 import { errorText, nativeCall } from '@/lib/player'
 
@@ -192,6 +194,10 @@ export function NetworkServicePage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <CloudSyncCard />
+      {!isAndroid() && (
+        <>
+          <hr className="border-border/60 my-2" />
       <div>
         <h2 className="text-xl font-bold">网络与服务</h2>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -366,6 +372,8 @@ export function NetworkServicePage() {
           />
         </SettingsCard>
       </section>
+        </>
+      )}
     </div>
   )
 }

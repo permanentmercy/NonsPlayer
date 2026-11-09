@@ -1000,6 +1000,13 @@ pub fn run() {
                 plugin_manager.shared_http(),
             )?;
             app.manage(adapter_installer.clone());
+            #[cfg(target_os = "android")]
+            let component_directory = {
+                let directory = data.join("bundled-adapters");
+                crate::platform::android::bundled_adapters::materialize(&directory)?;
+                Some(directory)
+            };
+            #[cfg(not(target_os = "android"))]
             let component_directory = cfg!(all(debug_assertions, desktop))
                 .then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bundled-adapters"));
             let component_music = music.clone();
@@ -1132,7 +1139,14 @@ pub fn run() {
                 if let Err(error) = startup_player.autoplay_on_startup() {
                     crate::infrastructure::diagnostics::warn("playback.autoplay.startup", error);
                 }
-                telemetry.report(telemetry_app, launch_time).await;
+                telemetry.report(telemetry_app.clone(), launch_time).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                if let Some(backend) = telemetry_app.try_state::<Backend>() {
+                    let cfg = crate::aggregate::cloud::get_config(&backend);
+                    if cfg.auto_sync && !cfg.server_url.is_empty() {
+                        let _ = crate::aggregate::cloud::execute_sync(&backend, &telemetry_app).await;
+                    }
+                }
             });
             #[cfg(desktop)]
             {
@@ -1163,6 +1177,9 @@ pub fn run() {
             crate::aggregate::sync::aggregate_sync,
             crate::aggregate::sync::aggregate_sync_status,
             crate::aggregate::sync::aggregate_sync_cancel,
+            crate::aggregate::cloud::cloud_sync,
+            crate::aggregate::cloud::cloud_sync_config,
+            crate::aggregate::cloud::set_cloud_sync_config,
             telemetry::telemetry_enabled,
             telemetry::set_telemetry_enabled,
             #[cfg(desktop)]

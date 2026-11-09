@@ -1,0 +1,16 @@
+services:
+  nons-sync:
+    build: .
+    container_name: nons-playlist-sync
+    restart: unless-stopped
+    ports:
+      # 映射到 127.0.0.1:17777 匹配你的路由器本地绑定
+      - "127.0.0.1:17777:17777"
+    environment:
+      - SYNC_HOST=0.0.0.0
+      - SYNC_PORT=17777
+      - SYNC_DB=/data/nons_playlists.db
+      # 如果需要密码保护，在此填写 token（客户端在设置里也填同样的值即可）
+      - SYNC_TOKEN=
+    volumes:
+      - ./data:/data

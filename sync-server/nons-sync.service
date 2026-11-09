@@ -1,0 +1,14 @@
+[Unit]
+Description=NonsPlayer Playlist Sync Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nons-sync
+ExecStart=/usr/bin/python3 /opt/nons-sync/server.py --host 0.0.0.0 --port 17777 --db /opt/nons-sync/nons_playlists.db
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

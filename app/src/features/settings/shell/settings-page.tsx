@@ -13,7 +13,7 @@ export default function SettingsPage() {
   const section = settingsSections.find(
     (item) =>
       item.id === sectionId &&
-      !(isAndroid() && ['shortcuts', 'network-services'].includes(item.id)) &&
+      !(isAndroid() && item.id === 'shortcuts') &&
       (isWindows() || item.id !== 'download')
   )
   return (
